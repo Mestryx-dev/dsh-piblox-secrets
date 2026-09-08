@@ -44,21 +44,39 @@ export function mergeConfig(partial: Partial<PluginConfig> = {}): PluginConfig {
   }
 }
 
-/** Minimal schemastery-compatible shape for installSection when available. */
-export function buildConfigSchema(): Record<string, unknown> {
-  return {
-    type: 'object',
-    properties: {
-      storeBackend: { type: 'string', default: 'embedded' },
-      dataDir: { type: 'string' },
-      cliPath: { type: 'string' },
-      bootHosts: { type: 'array', items: { type: 'string' }, default: ['*'] },
-      getReturnsEnvRef: { type: 'boolean', default: true },
-      exposeTools: { type: 'boolean', default: true },
-      uiEnabled: { type: 'boolean', default: true },
-      degradedMode: { type: 'string', default: 'tools-error' },
-    },
+export const SETTINGS_NS = 'piblox-secrets'
+
+/**
+ * Build Schemastery Config for settings.installSection when the host has
+ * @deepseek-ai/schemastery; otherwise return null (skip section — UI card needs it).
+ */
+export async function loadSettingsSchema(): Promise<{
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Config: any
+} | null> {
+  try {
+    // Dynamic import — optional peer; installed as dependency for lab/web.
+    const mod = (await import('@deepseek-ai/schemastery')) as {
+      default: {
+        object: (shape: Record<string, unknown>) => unknown
+        string: () => { default: (v: string) => unknown }
+        boolean: () => { default: (v: boolean) => unknown }
+        array: (inner: unknown) => { default: (v: unknown[]) => unknown }
+        union: (vals: string[]) => { default: (v: string) => unknown }
+      }
+    }
+    const z = mod.default
+    const Config = z.object({
+      storeBackend: z.union(['embedded', 'piblox-cli']).default('embedded'),
+      dataDir: z.string().default(''),
+      bootHosts: z.array(z.string()).default(['*']),
+      getReturnsEnvRef: z.boolean().default(true),
+      exposeTools: z.boolean().default(true),
+      uiEnabled: z.boolean().default(true),
+      degradedMode: z.union(['tools-error', 'fallback-credentials-yaml']).default('tools-error'),
+    })
+    return { Config }
+  } catch {
+    return null
   }
 }
-
-export const SETTINGS_NS = 'piblox-secrets'

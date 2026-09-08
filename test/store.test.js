@@ -115,8 +115,8 @@ test('http handlers names + post (no value in list)', async () => {
     registry: [],
     uiEnabled: true,
   })
-  const namesRoute = routes.find((r) => r.path.endsWith('/names'))
-  assert.ok(namesRoute)
+  const router = routes.find((r) => r.path === '/api/piblox-secrets')
+  assert.ok(router)
 
   const resChunks = []
   let statusCode = 0
@@ -128,7 +128,7 @@ test('http handlers names + post (no value in list)', async () => {
       if (body) resChunks.push(body)
     },
   }
-  await namesRoute.handler(
+  await router.handler(
     { method: 'GET', headers: { host: '127.0.0.1:3080' }, url: '/api/piblox-secrets/names' },
     res,
   )

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { PluginConfig } from './config.js'
-import { mergeConfig, SETTINGS_NS, buildConfigSchema } from './config.js'
+import { mergeConfig, SETTINGS_NS, loadSettingsSchema } from './config.js'
 import { PibloxCliBackendNotReadyError } from './bridge.js'
 import { registerHttpRoutes } from './http.js'
 import { buildDiscoverResult } from './store/discover.js'
@@ -9,8 +9,8 @@ import { createStore, resolveDataDir, type SecretsStore } from './store/index.js
 
 export const name = 'dsh-piblox-secrets'
 
-/** Soft inject — tools required; observability/policy/protocols optional for public installs. */
-export const inject = ['tools']
+/** Soft deps — public web installs may lack Core tools/observability at apply time. */
+export const inject: string[] = []
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(String(s)).digest('hex')
@@ -166,10 +166,8 @@ export function apply(
   ctx: {
     logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void }
     provide: (name: string, api: unknown) => void
-    tools?: { register: (name: string, def: unknown) => void }
     inject?: (deps: string[], fn: (c: unknown) => void) => void
     get?: (name: string) => unknown
-    observability?: { emit?: (event: string, payload: unknown, meta?: unknown) => void }
   },
   config: Partial<PluginConfig> = {},
 ): void {
@@ -181,9 +179,15 @@ export function apply(
     )
   }
 
+  const get = (key: string) => (typeof ctx.get === 'function' ? ctx.get(key) : undefined)
+  const observability = get('observability') as
+    | { emit?: (event: string, payload: unknown, meta?: unknown) => void }
+    | undefined
+  const tools = get('tools') as { register?: (name: string, def: unknown) => void } | undefined
+
   const dataDir = resolveDataDir(cfg.dataDir)
   const store = createStore({ dataDir })
-  const api = createSecretsService(ctx, cfg, store, ctx.observability)
+  const api = createSecretsService(ctx, cfg, store, observability)
 
   void api.boot().then(() => {
     ctx.logger?.info?.(
@@ -193,19 +197,19 @@ export function apply(
 
   ctx.provide('secrets', api)
 
-  if (cfg.exposeTools && ctx.tools?.register) {
+  if (cfg.exposeTools && tools?.register) {
     try {
-      ctx.tools.register('secrets_list_names', {
+      tools.register('secrets_list_names', {
         description: 'List secret key names (no values)',
         parameters: { type: 'object', properties: {} },
         execute: async () => api.listNames(),
       })
-      ctx.tools.register('secrets_discover', {
+      tools.register('secrets_discover', {
         description: 'Host → credential map from discover registry (names only)',
         parameters: { type: 'object', properties: {} },
         execute: async () => api.discover(),
       })
-      ctx.tools.register('secrets_get', {
+      tools.register('secrets_get', {
         description:
           'Break-glass get secret (policy APPROVAL recommended). Returns env ref by default.',
         parameters: {
@@ -233,23 +237,31 @@ export function apply(
     }
   }
 
-  // Settings section when host provides settings service
+  // Settings section when host provides settings + schemastery
   if (typeof ctx.inject === 'function') {
-    try {
-      ctx.inject(['settings'], (sctx: unknown) => {
-        const settingsCtx = sctx as { settings?: { installSection?: Function } }
-        settingsCtx.settings?.installSection?.(ctx, SETTINGS_NS, buildConfigSchema(), cfg, {
-          setSource: () => {},
-          onChange: () => {},
+    void loadSettingsSchema().then((schema) => {
+      if (!schema) {
+        ctx.logger?.warn?.('dsh-piblox-secrets: schemastery unavailable — Secrets settings card skipped')
+        return
+      }
+      try {
+        ctx.inject!(['settings'], (sctx: unknown) => {
+          const settingsCtx = sctx as { settings?: { installSection?: Function } }
+          settingsCtx.settings?.installSection?.(ctx, SETTINGS_NS, schema.Config, cfg, {
+            setSource: () => {},
+            onChange: () => {},
+          })
+          ctx.logger?.info?.('dsh-piblox-secrets: settings section piblox-secrets installed')
         })
-      })
-    } catch {
-      // settings optional
-    }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        ctx.logger?.warn?.(`dsh-piblox-secrets: settings install ${msg}`)
+      }
+    })
   }
 
-  if (cfg.uiEnabled && typeof ctx.get === 'function') {
-    const webServer = ctx.get('webServer') as
+  if (cfg.uiEnabled) {
+    const webServer = get('webServer') as
       | { register: (route: { kind: string; path: string; handler: Function }) => void }
       | undefined
     registerHttpRoutes(webServer, {

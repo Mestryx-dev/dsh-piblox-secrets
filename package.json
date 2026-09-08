@@ -45,6 +45,9 @@
     "secrets",
     "piblox"
   ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.2"
+  },
   "devDependencies": {
     "@types/node": "^22.13.10",
     "typescript": "^5.8.2"

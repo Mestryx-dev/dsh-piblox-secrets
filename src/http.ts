@@ -31,7 +31,6 @@ const LOOPBACK = /^(127\.0\.0\.1|\[::1\]|localhost)(:\d+)?$/i
 function sameOrigin(req: IncomingMessage): boolean {
   const host = String(req.headers.host || '')
   if (!LOOPBACK.test(host)) {
-    // Non-loopback (e.g. dsh.lan behind Traefik): require Origin host match when present
     const origin = req.headers.origin
     if (!origin) return true
     try {
@@ -56,6 +55,7 @@ export interface HttpApiOptions {
   uiEnabled: boolean
 }
 
+/** Single prefix router — avoids exact/prefix collisions on item paths. */
 export function createHttpHandlers(opts: HttpApiOptions): Array<{
   kind: 'exact' | 'prefix'
   path: string
@@ -63,7 +63,7 @@ export function createHttpHandlers(opts: HttpApiOptions): Array<{
 }> {
   const { store, registry, uiEnabled } = opts
 
-  const guard = async (req: IncomingMessage, res: ServerResponse, next: () => Promise<void>) => {
+  const router: Handler = async (req, res) => {
     if (!uiEnabled) {
       json(res, 404, { ok: false, error: 'ui disabled' })
       return
@@ -72,48 +72,17 @@ export function createHttpHandlers(opts: HttpApiOptions): Array<{
       json(res, 403, { ok: false, error: 'forbidden: cross-origin' })
       return
     }
-    await next()
-  }
 
-  const namesHandler: Handler = async (req, res) => {
-    await guard(req, res, async () => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { allow: 'GET' })
-        res.end('method not allowed')
-        return
-      }
-      const items = await store.listMeta()
-      json(res, 200, { ok: true, items })
-    })
-  }
+    const url = new URL(req.url || '/', 'http://localhost')
+    let rest = url.pathname
+    if (rest.startsWith(API_PREFIX)) {
+      rest = rest.slice(API_PREFIX.length)
+    }
+    rest = rest.replace(/^\//, '')
+    const method = req.method || 'GET'
 
-  const statusHandler: Handler = async (req, res) => {
-    await guard(req, res, async () => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { allow: 'GET' })
-        res.end('method not allowed')
-        return
-      }
-      const st = await store.status()
-      json(res, 200, { ok: true, ...st })
-    })
-  }
-
-  const discoverHandler: Handler = async (req, res) => {
-    await guard(req, res, async () => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { allow: 'GET' })
-        res.end('method not allowed')
-        return
-      }
-      const data = await buildDiscoverResult(store, registry)
-      json(res, 200, { ok: true, data })
-    })
-  }
-
-  const collectionHandler: Handler = async (req, res) => {
-    await guard(req, res, async () => {
-      if (req.method === 'POST') {
+    try {
+      if ((rest === '' || rest === '/') && method === 'POST') {
         const raw = await readBody(req)
         let body: { name?: string; value?: string }
         try {
@@ -126,59 +95,61 @@ export function createHttpHandlers(opts: HttpApiOptions): Array<{
           json(res, 400, { ok: false, error: 'name and value required' })
           return
         }
-        try {
-          const result = await store.setSecret(body.name, body.value)
-          json(res, 201, { ok: true, name: result.name })
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'set failed'
-          json(res, 400, { ok: false, error: msg })
-        }
+        const result = await store.setSecret(body.name, body.value)
+        json(res, 201, { ok: true, name: result.name })
         return
       }
-      res.writeHead(405, { allow: 'POST' })
-      res.end('method not allowed')
-    })
-  }
 
-  const itemHandler: Handler = async (req, res) => {
-    await guard(req, res, async () => {
-      const url = new URL(req.url || '/', 'http://localhost')
-      const name = decodeURIComponent(url.pathname.slice(`${API_PREFIX}/`.length))
-      if (!name || name.includes('/')) {
-        json(res, 404, { ok: false, error: 'not found' })
+      if (rest === 'names' && (method === 'GET' || method === 'HEAD')) {
+        const items = await store.listMeta()
+        json(res, 200, { ok: true, items })
         return
       }
-      if (req.method === 'GET') {
-        const value = await store.getSecretValue(name)
-        if (value === null) {
-          json(res, 404, { ok: false, error: 'not found' })
+
+      if (rest === 'status' && (method === 'GET' || method === 'HEAD')) {
+        const st = await store.status()
+        json(res, 200, { ok: true, ...st })
+        return
+      }
+
+      if (rest === 'discover' && (method === 'GET' || method === 'HEAD')) {
+        const data = await buildDiscoverResult(store, registry)
+        json(res, 200, { ok: true, data })
+        return
+      }
+
+      const name = decodeURIComponent(rest.split('/')[0] || '')
+      if (name && !name.includes('/')) {
+        if (method === 'GET') {
+          const value = await store.getSecretValue(name)
+          if (value === null) {
+            json(res, 404, { ok: false, error: 'not found' })
+            return
+          }
+          json(res, 200, { ok: true, name, value })
           return
         }
-        json(res, 200, { ok: true, name, value })
-        return
-      }
-      if (req.method === 'DELETE') {
-        const deleted = await store.deleteSecret(name)
-        if (!deleted) {
-          json(res, 404, { ok: false, error: 'not found' })
+        if (method === 'DELETE') {
+          const deleted = await store.deleteSecret(name)
+          if (!deleted) {
+            json(res, 404, { ok: false, error: 'not found' })
+            return
+          }
+          res.writeHead(204)
+          res.end()
           return
         }
-        res.writeHead(204)
-        res.end()
-        return
       }
-      res.writeHead(405, { allow: 'GET, DELETE' })
-      res.end('method not allowed')
-    })
+
+      json(res, 404, { ok: false, error: 'not found' })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'internal error'
+      // Never include secret values in error responses
+      json(res, 500, { ok: false, error: msg.includes('malformed') ? 'decrypt failed' : 'internal error' })
+    }
   }
 
-  return [
-    { kind: 'exact', path: `${API_PREFIX}/names`, handler: namesHandler },
-    { kind: 'exact', path: `${API_PREFIX}/status`, handler: statusHandler },
-    { kind: 'exact', path: `${API_PREFIX}/discover`, handler: discoverHandler },
-    { kind: 'exact', path: API_PREFIX, handler: collectionHandler },
-    { kind: 'prefix', path: `${API_PREFIX}/`, handler: itemHandler },
-  ]
+  return [{ kind: 'prefix', path: API_PREFIX, handler: router }]
 }
 
 /** Register all routes on a Cordis webServer if present. */
