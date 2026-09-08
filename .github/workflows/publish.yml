@@ -30,7 +30,17 @@ jobs:
           fi
       - run: npm ci
       - run: npm test
-      - name: Publish
-        run: npm publish --access public
+      - name: Publish (latest or next)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          PKG="$(node -p "require('./package.json').version")"
+          # SemVer prerelease (contains '-') → npm dist-tag next; else latest
+          if [[ "$PKG" == *-* ]]; then
+            echo "Publishing $PKG with dist-tag next"
+            npm publish --access public --tag next
+          else
+            echo "Publishing $PKG with dist-tag latest"
+            npm publish --access public --tag latest
+          fi

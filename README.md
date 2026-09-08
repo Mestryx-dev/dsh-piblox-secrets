@@ -17,11 +17,11 @@ Requires Node ≥ 22 (built-in `node:sqlite`). Headless profiles work without th
 
 ## CI / release
 
-- CI: `npm test` on push/PR to `master`
-- npm publish: push tag `vX.Y.Z` matching `package.json` version (needs repo secret `NPM_TOKEN`)
-- Details: [docs/runbooks/release.md](docs/runbooks/release.md)
+Locked model **B**: `feature/*` → PR → `dev` (lab / `@next`) → PR → `master` (`@latest`).
 
-No long-lived `dev` branch — trunk on `master`, operational feedback from Pi / lab via tags.
+- CI: `npm test` on push/PR to `master` and `dev`
+- npm: tag `vX.Y.Z-next.N` → dist-tag `next`; tag `vX.Y.Z` → `latest` (needs secret `NPM_TOKEN`)
+- Details: [docs/runbooks/release.md](docs/runbooks/release.md)
 
 ## Secrets Boundary v1.1
 
