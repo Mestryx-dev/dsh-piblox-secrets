@@ -28,6 +28,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs && chmod +x dist/cli.js",
+    "prepare": "npm run build",
     "test": "npm run build && node --test test/*.test.js",
     "smoke": "npm run build && node test/smoke.js",
     "prepublishOnly": "npm run build && npm test"
