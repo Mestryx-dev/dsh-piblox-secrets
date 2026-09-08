@@ -10,7 +10,7 @@ dsh plugin --profile <name> add dsh-piblox-secrets
 dsh plugin --profile <name> add ./dsh-piblox-secrets
 ```
 
-Requires Node ≥ 22. Headless profiles work without the web client half.
+Requires Node ≥ 22 (built-in `node:sqlite`). Headless profiles work without the web client half.
 
 ## Vault location
 
