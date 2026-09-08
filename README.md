@@ -2,6 +2,8 @@
 
 Public [Cordis](https://github.com/shigma/cordis) / [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin: encrypted secrets vault, **Secrets Boundary v1.1** (agent plane vs credential plane), operator **Secrets** settings UI.
 
+Agent working notes: [AGENTS.md](AGENTS.md).
+
 ## Install
 
 ```bash
