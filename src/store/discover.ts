@@ -1,15 +1,45 @@
 import type { SecretsStore } from './index.js'
 import {
   DEFAULT_SERVICE_REGISTRY,
-  type AuthType,
   type ServiceDefinition,
 } from './service-registry.js'
 
+/** Model-safe capability (no credential env names, no secret handles). */
+export interface CapabilityInfo {
+  id: string
+  host: string
+  available: boolean
+}
+
+export interface CapabilitiesResult {
+  vault: string
+  capabilities: CapabilityInfo[]
+}
+
+/**
+ * Build model-facing capability catalog.
+ * Never includes credential variable names or DSH_SECRET_* handles.
+ */
+export async function buildCapabilitiesResult(
+  store: SecretsStore,
+  registry: readonly ServiceDefinition[] = DEFAULT_SERVICE_REGISTRY,
+  vault = 'default',
+): Promise<CapabilitiesResult> {
+  const stored = new Set(await store.listNames())
+  const capabilities: CapabilityInfo[] = registry.map((def) => ({
+    id: def.name,
+    host: def.host,
+    available: stored.has(def.credential),
+  }))
+  return { vault, capabilities }
+}
+
+/** Admin/operator discover (HTTP UI) — may include credential names. */
 export interface DiscoverService {
   name: string
   host: string
   credential: string
-  authType: AuthType
+  authType: string
 }
 
 export interface DiscoverResult {

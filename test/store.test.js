@@ -54,7 +54,7 @@ test('export dotenv', async () => {
   }
 })
 
-test('discover maps available credentials', async () => {
+test('discover maps available credentials (admin)', async () => {
   const dir = tmpDir()
   const store = createStore({ dataDir: dir })
   try {
@@ -62,6 +62,10 @@ test('discover maps available credentials', async () => {
     const disc = await buildDiscoverResult(store)
     assert.ok(disc.available_credentials.includes('OPENROUTER_API_KEY'))
     assert.ok(disc.services.some((s) => s.credential === 'OPENROUTER_API_KEY'))
+    const { buildCapabilitiesResult } = await import('../dist/store/discover.js')
+    const caps = await buildCapabilitiesResult(store)
+    assert.ok(caps.capabilities.some((c) => c.id === 'openrouter' && c.available))
+    assert.ok(!JSON.stringify(caps).includes('OPENROUTER_API_KEY'))
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
@@ -90,19 +94,24 @@ test('cli list-names / set / get', async () => {
   delete process.env.PIBLOX_SECRETS_DATA_DIR
 })
 
-test('cordis service boot + tools surface', async () => {
+test('cordis service boot + capabilities (no env leak)', async () => {
   const dir = tmpDir()
   const api = createSecretsForTest({ dataDir: dir, bootHosts: ['*'] })
   await api.store.setSecret('HASS_TOKEN', 'ha-secret')
+  delete process.env.HASS_TOKEN
+  delete process.env.DSH_SECRET_HASS_TOKEN
   await api.boot()
   assert.equal(api.isDegraded(), false)
   const names = await api.listNames()
   assert.equal(names.ok, true)
   assert.ok(names.names.includes('HASS_TOKEN'))
+  const cap = await api.capabilities()
+  assert.equal(cap.ok, true)
+  assert.ok(!JSON.stringify(cap.data).includes('HASS_TOKEN'))
+  assert.notEqual(process.env.HASS_TOKEN, 'ha-secret')
+  assert.equal(process.env.DSH_SECRET_HASS_TOKEN, undefined)
   const got = await api.secretsGet('HASS_TOKEN', 'test')
-  assert.equal(got.ok, true)
-  assert.ok(got.env)
-  assert.equal(process.env[got.env], 'ha-secret')
+  assert.equal(got.ok, false)
   api.store.close()
   rmSync(dir, { recursive: true, force: true })
 })

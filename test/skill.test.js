@@ -37,8 +37,9 @@ whenToUse: >-
     assert.ok(skill)
     assert.equal(skill.name, 'dsh-piblox-secrets')
     assert.ok(skill.description.length > 20)
-    assert.ok(skill.content.includes('secrets_list_names'))
+    assert.ok(skill.content.includes('secrets_capabilities'))
     assert.ok(skill.content.includes('Never'))
+    assert.ok(skill.content.includes('Boundary'))
   })
 
   it('registerBundledSkill calls skills.register', () => {

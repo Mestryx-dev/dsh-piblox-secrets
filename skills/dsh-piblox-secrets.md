@@ -1,61 +1,64 @@
 ---
 name: dsh-piblox-secrets
 description: >-
-  Use when a DSH/Cordis agent needs API keys or credentials from the
-  dsh-piblox-secrets vault — list/discover names, gated get, env injection.
-  Never ask the operator to paste secrets in chat.
+  Use when a DSH agent needs to know whether an integration capability
+  (openrouter, github, …) is available. Never fetch secret values or env handles
+  into model context. Secrets Boundary v1.1.
 whenToUse: >-
-  Credential or API key needed; 401/unauthorized from an external host;
-  secrets_list_names / secrets_discover / secrets_get tools; operator asks
-  where keys are stored or how to add one.
+  Checking if an API integration is configured; 401 from a host; operator asks
+  how secrets work. Not for retrieving keys.
 ---
 
-# dsh-piblox-secrets — agent usage
+# dsh-piblox-secrets — agent usage (Secrets Boundary v1.1)
 
-Encrypted vault shipped with the **dsh-piblox-secrets** plugin.
-Values stay out of model context unless break-glass is explicitly approved.
+Contract:
+
+```text
+LLM → semantic tool → policy → credential worker → API
+```
+
+The model plane must never see secret **values**, `DSH_SECRET_*` handles, or
+credential **variable names** (`OPENROUTER_API_KEY`).
 
 ## Hard rules
 
 1. **Never** ask the operator to paste a secret into chat.
-2. **Never** log, echo, retain, or quote secret **values**.
-3. Prefer **names + env refs** over plaintext `secrets_get` with `returnValue: true`.
-4. If a key is missing → tell the operator to add it in **Settings → Secrets** (or CLI). Do not invent values.
+2. **Never** call `secrets_get` (removed from normal catalog; break-glass only if host enables it).
+3. **Never** instruct shell/`printenv`/Node to read credentials — agent process has none.
+4. Prefer **semantic tools** (e.g. future `openrouter.chat`) that bind credentials off-model.
+5. If a capability is missing → tell the operator to add it in **Settings → Secrets** (or CLI). Do not invent values.
 
-## Tool order
+## Model tools (allowed)
 
-| Step | Tool / action | Returns |
-|------|---------------|---------|
-| 1 | `secrets_list_names` | Key names only |
-| 2 | `secrets_discover` | Host → credential name map (no values) |
-| 3 | `secrets_get` | Env ref by default (`DSH_SECRET_<KEY>`). Plaintext only if policy APPROVAL + `returnValue: true` + clear reason |
+| Tool | Returns |
+|------|---------|
+| `secrets_capabilities` | Capability ids + availability (`openrouter`, `github`, …) |
+| `secrets_discover` | Same capability → host map (no env var names) |
 
-There is **no** model write/delete tool. CRUD of values is operator-only (UI or CLI).
+## Forbidden / not for agents
 
-## When a key is missing
+| Surface | Why |
+|---------|-----|
+| `secrets_get` / env refs | Leaks handles into the transcript |
+| `secrets_list_names` | Env var names are reusable handles |
+| `process.env` / `printenv` | Agent plane starts without secrets |
+| CLI `export --dotenv` / `get` | Admin plane only |
 
-1. Run `secrets_list_names` / `secrets_discover` to confirm.
-2. Tell the operator the exact **UPPER_SNAKE_CASE** name to create.
-3. Point them to **Settings → Secrets** (sidebar), or:
+## When a capability is missing
 
-```bash
-npx dsh-piblox-secrets set KEY_NAME '…'
-```
+1. Call `secrets_capabilities` / `secrets_discover`.
+2. Tell the operator the **capability id** (e.g. `openrouter`), not a guessed env name.
+3. Point them to **Settings → Secrets** or admin CLI `dsh-piblox-secrets set …`.
+4. After they confirm, retry the **semantic** tool — do not fetch the key yourself.
 
-4. After they confirm, retry the host call — do not stall asking for paste.
+## Credential plane (not you)
 
-## Vault location (operator)
-
-| Path | Role |
-|------|------|
-| `$DSH_HOME/secrets/piblox-secrets.db` | SQLite store |
-| `$DSH_HOME/secrets/.secrets-key` | AES-256-GCM key (`0600`) |
-
-CLI: `list-names`, `discover --json`, `export --dotenv` (Hermes `secrets.command` parity), `get` (break-glass).
+Providers and the future credential worker use `ctx.secrets.resolve` /
+`materialize` into an **explicit** env object. That path is invisible to the model.
 
 ## Anti-patterns
 
-- ❌ Treating this vault as Mestryx `~/piblox` / `piblox-secrets` CLI on the seat (different store)
-- ❌ Putting secrets in `cordis.patch.yml`, prompts, or Hindsight retains
-- ❌ Calling `secrets_get` with `returnValue: true` “just to check”
-- ❌ Retrying an API 5× with a missing key instead of stopping at discover
+- ❌ `secrets_get` “just to wire the API”
+- ❌ Asking for `OPENROUTER_API_KEY=` in chat
+- ❌ Writing secrets into the agent shell environment
+- ❌ Treating this vault as Mestryx `~/piblox` (different store until jumelage)

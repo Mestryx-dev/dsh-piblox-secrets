@@ -4,7 +4,7 @@ import { mergeConfig, SETTINGS_NS, loadSettingsSchema } from './config.js'
 import { PibloxCliBackendNotReadyError } from './bridge.js'
 import { registerHttpRoutes } from './http.js'
 import { registerBundledSkill } from './register-skill.js'
-import { buildDiscoverResult } from './store/discover.js'
+import { buildCapabilitiesResult, buildDiscoverResult } from './store/discover.js'
 import { exportDotenv } from './store/export-dotenv.js'
 import { createStore, resolveDataDir, type SecretsStore } from './store/index.js'
 
@@ -18,10 +18,28 @@ function sha256Hex(s: string): string {
 }
 
 export interface SecretsService {
-  listNames(): Promise<{ ok: boolean; code?: string; names: string[] }>
+  /** Admin/operator — raw vault key names (not model-facing). */
+  listNames(): Promise<{ ok: boolean; code?: string; names: string[]; message?: string }>
+  /** Admin/operator discover (credential names). Used by HTTP UI. */
+  discoverAdmin(): Promise<{ ok: boolean; code?: string; data?: unknown; message?: string }>
+  /** Model-facing capabilities (no env var names). */
+  capabilities(): Promise<{ ok: boolean; code?: string; data?: unknown; message?: string }>
+  /** @deprecated alias of capabilities for older callers expecting discover(). */
   discover(): Promise<{ ok: boolean; code?: string; data?: unknown; message?: string }>
   hasKey(name: string): boolean
+  /** Credential-plane: return value for authorized consumers. Never a model tool. */
   resolve(ref: string): { ok: boolean; code?: string; value?: string; message?: string }
+  /**
+   * Credential-plane: copy keys into an explicit env object.
+   * Refuses target === process.env unless allowProcessEnvMaterialize.
+   */
+  materialize(
+    keys: string[],
+    target: Record<string, string | undefined>,
+  ): { ok: boolean; code?: string; message?: string; applied: string[] }
+  /**
+   * Break-glass only. Never writes process.env. Model tool gated by exposeSecretsGetTool.
+   */
   secretsGet(
     key: string,
     reason: string,
@@ -29,6 +47,8 @@ export interface SecretsService {
   ): Promise<Record<string, unknown>>
   isDegraded(): boolean
   hashes(): string[]
+  /** Snapshot of secret values currently in the vault map (tests only). */
+  vaultValuesForTest(): string[]
   store: SecretsStore
   boot(): Promise<void>
 }
@@ -43,7 +63,8 @@ function createSecretsService(
   const valueHashes = new Set<string>()
   let degraded = false
   let namesCache = { at: 0, names: [] as string[] }
-  let discoverCache = { at: 0, data: null as unknown }
+  let capabilitiesCache = { at: 0, data: null as unknown }
+  let adminDiscoverCache = { at: 0, data: null as unknown }
   let resolveCount = { window: Date.now(), n: 0 }
 
   async function boot(): Promise<void> {
@@ -64,6 +85,7 @@ function createSecretsService(
           val = val.slice(1, -1)
         }
         if (!cfg.bootHosts.includes(key) && !cfg.bootHosts.includes('*')) continue
+        // In-memory credential map only — never process.env (Boundary v1.1).
         vault.set(key, val)
         valueHashes.add(sha256Hex(val))
       }
@@ -96,15 +118,31 @@ function createSecretsService(
     }
   }
 
-  async function discover() {
+  async function capabilities() {
     if (degraded) return { ok: false, code: 'E_TOOL_FAILURE_SECRETS_STORE' }
     const now = Date.now()
-    if (now - discoverCache.at < cfg.cacheTtlSec * 1000 && discoverCache.data) {
-      return { ok: true, data: discoverCache.data }
+    if (now - capabilitiesCache.at < cfg.cacheTtlSec * 1000 && capabilitiesCache.data) {
+      return { ok: true, data: capabilitiesCache.data }
+    }
+    try {
+      const data = await buildCapabilitiesResult(store, cfg.serviceRegistry)
+      capabilitiesCache = { at: now, data }
+      return { ok: true, data }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { ok: false, code: 'E_TOOL_FAILURE_SECRETS_STORE', message }
+    }
+  }
+
+  async function discoverAdmin() {
+    if (degraded) return { ok: false, code: 'E_TOOL_FAILURE_SECRETS_STORE' }
+    const now = Date.now()
+    if (now - adminDiscoverCache.at < cfg.cacheTtlSec * 1000 && adminDiscoverCache.data) {
+      return { ok: true, data: adminDiscoverCache.data }
     }
     try {
       const data = await buildDiscoverResult(store, cfg.serviceRegistry)
-      discoverCache = { at: now, data }
+      adminDiscoverCache = { at: now, data }
       return { ok: true, data }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -130,8 +168,49 @@ function createSecretsService(
     return { ok: true, value: vault.get(ref) }
   }
 
+  function materialize(
+    keys: string[],
+    target: Record<string, string | undefined>,
+  ): { ok: boolean; code?: string; message?: string; applied: string[] } {
+    if (target === process.env && !cfg.allowProcessEnvMaterialize) {
+      return {
+        ok: false,
+        code: 'E_POLICY_DENIED_PROCESS_ENV_MATERIALIZE',
+        message:
+          'Refusing to write secrets into process.env (agent shell inheritance). Pass an explicit env object.',
+        applied: [],
+      }
+    }
+    const applied: string[] = []
+    for (const key of keys) {
+      const val = vault.get(key)
+      if (val == null) continue
+      target[key] = val
+      applied.push(key)
+    }
+    return { ok: true, applied }
+  }
+
   async function secretsGet(key: string, reason: string, opts: { returnValue?: boolean } = {}) {
-    if (!reason) return { ok: false, code: 'E_POLICY_DENIED_SECRETS_GET_NO_REASON', message: 'reason required' }
+    if (!reason) {
+      return { ok: false, code: 'E_POLICY_DENIED_SECRETS_GET_NO_REASON', message: 'reason required' }
+    }
+    // Boundary v1.1: never mint DSH_SECRET_* into process.env or return env handles.
+    if (!opts.returnValue) {
+      return {
+        ok: false,
+        code: 'E_POLICY_DENIED_SECRETS_GET_ENV_REF',
+        message:
+          'Env-ref get is removed (Secrets Boundary v1.1). Use credential-plane resolve/materialize or semantic tools.',
+      }
+    }
+    if (!cfg.allowBreakGlassPlaintext) {
+      return {
+        ok: false,
+        code: 'E_POLICY_DENIED_SECRETS_GET_PLAINTEXT',
+        message: 'Plaintext get disabled. Enable allowBreakGlassPlaintext only for admin break-glass.',
+      }
+    }
     let val = vault.get(key)
     if (val == null) {
       val = (await store.getSecretValue(key)) ?? undefined
@@ -141,24 +220,27 @@ function createSecretsService(
       }
     }
     if (val == null) return { ok: false, code: 'E_NOT_FOUND_SECRET' }
-
-    if (cfg.getReturnsEnvRef && !opts.returnValue) {
-      const env = `${cfg.envRefPrefix}${key}`
-      process.env[env] = val
-      return { ok: true, env, key }
-    }
+    observability?.emit?.(
+      'tool.called',
+      { key_name: key, via: 'secrets.get.breakglass', reason },
+      { source: 'secrets' },
+    )
     return { ok: true, value: val, key, value_returned: true }
   }
 
   return {
     boot,
     listNames,
-    discover,
+    discoverAdmin,
+    capabilities,
+    discover: capabilities,
     hasKey,
     resolve,
+    materialize,
     secretsGet,
     isDegraded: () => degraded,
     hashes: () => [...valueHashes],
+    vaultValuesForTest: () => [...vault.values()],
     store,
   }
 }
@@ -222,38 +304,42 @@ export function apply(
 
   if (cfg.exposeTools && tools?.register) {
     try {
-      tools.register('secrets_list_names', {
-        description: 'List secret key names (no values)',
+      tools.register('secrets_capabilities', {
+        description:
+          'List available credential capabilities (ids like openrouter, github). No secret values or env var names.',
         parameters: { type: 'object', properties: {} },
-        execute: async () => api.listNames(),
+        execute: async () => api.capabilities(),
       })
       tools.register('secrets_discover', {
-        description: 'Host → credential map from discover registry (names only)',
-        parameters: { type: 'object', properties: {} },
-        execute: async () => api.discover(),
-      })
-      tools.register('secrets_get', {
         description:
-          'Break-glass get secret (policy APPROVAL recommended). Returns env ref by default.',
-        parameters: {
-          type: 'object',
-          properties: {
-            key: { type: 'string' },
-            reason: { type: 'string' },
-            returnValue: { type: 'boolean' },
-          },
-          required: ['key', 'reason'],
-        },
-        execute: async ({
-          key,
-          reason,
-          returnValue,
-        }: {
-          key: string
-          reason: string
-          returnValue?: boolean
-        }) => api.secretsGet(key, reason, { returnValue }),
+          'Capability → host map for available integrations. No credential env names or secret handles.',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => api.capabilities(),
       })
+      if (cfg.exposeSecretsGetTool) {
+        tools.register('secrets_get', {
+          description:
+            'BREAK-GLASS admin only. Does not write process.env. Plaintext requires allowBreakGlassPlaintext.',
+          parameters: {
+            type: 'object',
+            properties: {
+              key: { type: 'string' },
+              reason: { type: 'string' },
+              returnValue: { type: 'boolean' },
+            },
+            required: ['key', 'reason'],
+          },
+          execute: async ({
+            key,
+            reason,
+            returnValue,
+          }: {
+            key: string
+            reason: string
+            returnValue?: boolean
+          }) => api.secretsGet(key, reason, { returnValue }),
+        })
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       ctx.logger?.warn?.(`dsh-piblox-secrets: tool register ${msg}`)
@@ -303,7 +389,7 @@ export function createSecretsForTest(overrides: Partial<PluginConfig> & { dataDi
 
 export { mergeConfig, SETTINGS_NS, DEFAULT_CONFIG } from './config.js'
 export { createStore, resolveDataDir, getDefaultStore } from './store/index.js'
-export { buildDiscoverResult } from './store/discover.js'
+export { buildDiscoverResult, buildCapabilitiesResult } from './store/discover.js'
 export { exportDotenv } from './store/export-dotenv.js'
 export { createHttpHandlers, API_PREFIX } from './http.js'
 export { PibloxCliBackendNotReadyError, listExternalCliNames } from './bridge.js'

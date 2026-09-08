@@ -10,14 +10,35 @@ export interface PluginConfig {
   /** Absolute path to piblox-secrets CLI when storeBackend=piblox-cli (phase 2). */
   cliPath?: string
   cliTimeoutMs: number
+  /**
+   * Which vault keys to load into the in-memory credential map at boot.
+   * Does **not** write process.env (Secrets Boundary v1.1).
+   */
   bootHosts: string[]
-  getReturnsEnvRef: true | boolean
+  /**
+   * @deprecated Boundary v1.1 — model get removed; env refs never written to process.env.
+   * Kept for config compat; ignored.
+   */
+  getReturnsEnvRef: boolean
+  /**
+   * When true, register model tool `secrets_get` (break-glass). Default false.
+   * Even then, get never writes process.env; plaintext only if returnValue+allowBreakGlassPlaintext.
+   */
+  exposeSecretsGetTool: boolean
+  /** Allow secretsGet(..., { returnValue: true }) when exposeSecretsGetTool. Default false. */
+  allowBreakGlassPlaintext: boolean
+  /**
+   * When true, `materialize(..., process.env)` is allowed.
+   * Default false — agent shell must not inherit secrets.
+   */
+  allowProcessEnvMaterialize: boolean
   cacheTtlSec: number
   resolvePerMinute: number
   degradedMode: 'tools-error' | 'fallback-credentials-yaml'
   exposeTools: boolean
   uiEnabled: boolean
   serviceRegistry: ServiceDefinition[]
+  /** @deprecated unused for model path; kept for CLI docs only */
   envRefPrefix: string
 }
 
@@ -25,7 +46,10 @@ export const DEFAULT_CONFIG: PluginConfig = {
   storeBackend: 'embedded',
   cliTimeoutMs: 5000,
   bootHosts: ['*'],
-  getReturnsEnvRef: true,
+  getReturnsEnvRef: false,
+  exposeSecretsGetTool: false,
+  allowBreakGlassPlaintext: false,
+  allowProcessEnvMaterialize: false,
   cacheTtlSec: 300,
   resolvePerMinute: 30,
   degradedMode: 'tools-error',
@@ -55,7 +79,6 @@ export async function loadSettingsSchema(): Promise<{
   Config: any
 } | null> {
   try {
-    // Dynamic import — optional peer; installed as dependency for lab/web.
     const mod = (await import('@deepseek-ai/schemastery')) as {
       default: {
         object: (shape: Record<string, unknown>) => unknown
@@ -70,7 +93,9 @@ export async function loadSettingsSchema(): Promise<{
       storeBackend: z.union(['embedded', 'piblox-cli']).default('embedded'),
       dataDir: z.string().default(''),
       bootHosts: z.array(z.string()).default(['*']),
-      getReturnsEnvRef: z.boolean().default(true),
+      exposeSecretsGetTool: z.boolean().default(false),
+      allowBreakGlassPlaintext: z.boolean().default(false),
+      allowProcessEnvMaterialize: z.boolean().default(false),
       exposeTools: z.boolean().default(true),
       uiEnabled: z.boolean().default(true),
       degradedMode: z.union(['tools-error', 'fallback-credentials-yaml']).default('tools-error'),

@@ -4,7 +4,9 @@
       config:
         storeBackend: embedded
         exposeTools: true
-        getReturnsEnvRef: true
+        exposeSecretsGetTool: false
+        allowBreakGlassPlaintext: false
+        allowProcessEnvMaterialize: false
         uiEnabled: true
         degradedMode: tools-error
         bootHosts:
