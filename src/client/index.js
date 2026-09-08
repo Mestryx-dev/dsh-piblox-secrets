@@ -11,10 +11,12 @@ window.__ModuleLoader__.load({
     let useState = react.useState;
     let useEffect = react.useEffect;
     let useCallback = react.useCallback;
+    let useRef = react.useRef;
 
     const SECTION_ID = "secrets";
     const LOCALE_NS = "settings.secrets";
     const API = "/api/piblox-secrets";
+    const MASK = "••••••••••••••••";
 
     const DICT = {
       en: {
@@ -27,11 +29,13 @@ window.__ModuleLoader__.load({
         name: "Name",
         value: "Value",
         add: "Add secret",
-        reveal: "Reveal",
-        hide: "Hide",
+        show: "Show value",
+        hide: "Hide value",
         delete: "Delete",
         confirmDelete: "Delete this secret?",
         nameHint: "UPPER_SNAKE_CASE",
+        saved: "Saved",
+        saving: "Saving…",
         error: "Something went wrong",
         loading: "Loading…",
       },
@@ -45,11 +49,13 @@ window.__ModuleLoader__.load({
         name: "名称",
         value: "值",
         add: "添加密钥",
-        reveal: "显示",
+        show: "显示",
         hide: "隐藏",
         delete: "删除",
         confirmDelete: "删除此密钥？",
         nameHint: "UPPER_SNAKE_CASE",
+        saved: "已保存",
+        saving: "保存中…",
         error: "出错了",
         loading: "加载中…",
       },
@@ -75,6 +81,216 @@ window.__ModuleLoader__.load({
       return data;
     }
 
+    const iconBtn = {
+      type: "button",
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "2rem",
+        height: "2rem",
+        padding: 0,
+        borderRadius: "0.4rem",
+        border: "1px solid color-mix(in oklab, CanvasText 18%, transparent)",
+        background: "transparent",
+        color: "inherit",
+        cursor: "pointer",
+        flexShrink: 0,
+      },
+    };
+
+    function IconEye({ open }) {
+      // Minimal stroke icons — no brand logos
+      if (open) {
+        return jsxs("svg", {
+          width: 16,
+          height: 16,
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 2,
+          "aria-hidden": true,
+          children: [
+            jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" }),
+            jsx("path", { d: "M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" }),
+            jsx("line", { x1: 1, y1: 1, x2: 23, y2: 23 }),
+          ],
+        });
+      }
+      return jsxs("svg", {
+        width: 16,
+        height: 16,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        "aria-hidden": true,
+        children: [
+          jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+          jsx("circle", { cx: 12, cy: 12, r: 3 }),
+        ],
+      });
+    }
+
+    function IconTrash() {
+      return jsxs("svg", {
+        width: 16,
+        height: 16,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        "aria-hidden": true,
+        children: [
+          jsx("polyline", { points: "3 6 5 6 21 6" }),
+          jsx("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }),
+        ],
+      });
+    }
+
+    function SecretRow({ item, t, onError, onDeleted }) {
+      const [draft, setDraft] = useState("");
+      const [loaded, setLoaded] = useState(false);
+      const [visible, setVisible] = useState(false);
+      const [dirty, setDirty] = useState(false);
+      const [saveState, setSaveState] = useState(""); // '' | saving | saved
+      const baseline = useRef("");
+
+      async function ensureLoaded() {
+        if (loaded) return baseline.current;
+        const r = await api("/" + encodeURIComponent(item.name));
+        const val = r.value || "";
+        baseline.current = val;
+        setDraft(val);
+        setLoaded(true);
+        return val;
+      }
+
+      async function onToggleVisible() {
+        try {
+          await ensureLoaded();
+          setVisible((v) => !v);
+        } catch (e) {
+          onError((e && e.message) || t("error"));
+        }
+      }
+
+      async function onFocus() {
+        if (loaded) return;
+        try {
+          await ensureLoaded();
+        } catch (e) {
+          onError((e && e.message) || t("error"));
+        }
+      }
+
+      function onChange(ev) {
+        setDraft(ev.target.value);
+        setDirty(true);
+        setSaveState("");
+      }
+
+      async function persist(next) {
+        if (!next) return;
+        if (next === baseline.current) {
+          setDirty(false);
+          return;
+        }
+        setSaveState("saving");
+        try {
+          await api("", { method: "POST", body: JSON.stringify({ name: item.name, value: next }) });
+          baseline.current = next;
+          setDirty(false);
+          setLoaded(true);
+          setSaveState("saved");
+          setTimeout(() => setSaveState((s) => (s === "saved" ? "" : s)), 1200);
+        } catch (e) {
+          setSaveState("");
+          onError((e && e.message) || t("error"));
+        }
+      }
+
+      async function onBlur() {
+        if (!dirty) return;
+        await persist(draft);
+      }
+
+      async function onDelete() {
+        if (!confirm(t("confirmDelete"))) return;
+        try {
+          await api("/" + encodeURIComponent(item.name), { method: "DELETE" });
+          onDeleted();
+        } catch (e) {
+          onError((e && e.message) || t("error"));
+        }
+      }
+
+      return jsxs("div", {
+        style: {
+          display: "grid",
+          gridTemplateColumns: "minmax(7rem, 11rem) 1fr auto auto",
+          gap: "0.5rem",
+          alignItems: "center",
+          padding: "0.65rem 0.75rem",
+          borderRadius: "0.5rem",
+          background: "color-mix(in oklab, Canvas 92%, CanvasText 8%)",
+        },
+        children: [
+          jsx("code", {
+            style: { fontSize: "0.8rem", wordBreak: "break-all", opacity: 0.9 },
+            children: item.name,
+          }),
+          jsxs("div", {
+            style: { display: "flex", flexDirection: "column", gap: "0.15rem", minWidth: 0 },
+            children: [
+              jsx("input", {
+                type: visible ? "text" : "password",
+                value: loaded ? draft : "",
+                placeholder: loaded ? "" : MASK,
+                autoComplete: "off",
+                spellCheck: false,
+                onFocus: () => void onFocus(),
+                onChange: onChange,
+                onBlur: () => void onBlur(),
+                "aria-label": item.name,
+                style: {
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "0.45rem 0.6rem",
+                  borderRadius: "0.4rem",
+                  border: "1px solid color-mix(in oklab, CanvasText 18%, transparent)",
+                  background: "transparent",
+                  color: "inherit",
+                  font: "inherit",
+                  fontSize: "0.85rem",
+                },
+              }),
+              saveState
+                ? jsx("span", {
+                    style: { fontSize: "0.7rem", opacity: 0.65 },
+                    children: saveState === "saving" ? t("saving") : t("saved"),
+                  })
+                : null,
+            ],
+          }),
+          jsx("button", {
+            ...iconBtn,
+            title: visible ? t("hide") : t("show"),
+            "aria-label": visible ? t("hide") : t("show"),
+            onClick: () => void onToggleVisible(),
+            children: jsx(IconEye, { open: visible }),
+          }),
+          jsx("button", {
+            ...iconBtn,
+            title: t("delete"),
+            "aria-label": t("delete"),
+            onClick: () => void onDelete(),
+            children: jsx(IconTrash, {}),
+          }),
+        ],
+      });
+    }
+
     function SecretsSection(props) {
       const t = (props && props.t) || ((k) => DICT.en[k] || k);
       const [items, setItems] = useState([]);
@@ -83,7 +299,6 @@ window.__ModuleLoader__.load({
       const [name, setName] = useState("");
       const [value, setValue] = useState("");
       const [showValue, setShowValue] = useState(false);
-      const [revealed, setRevealed] = useState({});
       const [busy, setBusy] = useState(false);
 
       const refresh = useCallback(async () => {
@@ -118,40 +333,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function onReveal(secretName) {
-        if (revealed[secretName] != null) {
-          setRevealed((prev) => {
-            const next = { ...prev };
-            delete next[secretName];
-            return next;
-          });
-          return;
-        }
-        try {
-          const r = await api("/" + encodeURIComponent(secretName));
-          setRevealed((prev) => ({ ...prev, [secretName]: r.value }));
-        } catch (err2) {
-          setErr((err2 && err2.message) || t("error"));
-        }
-      }
-
-      async function onDelete(secretName) {
-        if (!confirm(t("confirmDelete"))) return;
-        try {
-          await api("/" + encodeURIComponent(secretName), { method: "DELETE" });
-          await refresh();
-        } catch (err2) {
-          setErr((err2 && err2.message) || t("error"));
-        }
-      }
-
       return jsxs("div", {
         className: "dsh-piblox-secrets",
         style: {
           display: "flex",
           flexDirection: "column",
           gap: "1.25rem",
-          maxWidth: "40rem",
+          maxWidth: "44rem",
         },
         children: [
           jsxs("div", {
@@ -176,34 +364,13 @@ window.__ModuleLoader__.load({
             style: { display: "flex", flexDirection: "column", gap: "0.5rem" },
             children: items.length
               ? items.map((item) =>
-                  jsxs(
-                    "div",
+                  jsx(
+                    SecretRow,
                     {
-                      style: {
-                        display: "grid",
-                        gridTemplateColumns: "1fr auto auto",
-                        gap: "0.5rem",
-                        alignItems: "center",
-                        padding: "0.65rem 0.75rem",
-                        borderRadius: "0.5rem",
-                        background: "color-mix(in oklab, Canvas 92%, CanvasText 8%)",
-                      },
-                      children: [
-                        jsx("code", {
-                          style: { fontSize: "0.85rem", wordBreak: "break-all" },
-                          children: revealed[item.name] != null ? revealed[item.name] : item.name,
-                        }),
-                        jsx("button", {
-                          type: "button",
-                          onClick: () => void onReveal(item.name),
-                          children: revealed[item.name] != null ? t("hide") : t("reveal"),
-                        }),
-                        jsx("button", {
-                          type: "button",
-                          onClick: () => void onDelete(item.name),
-                          children: t("delete"),
-                        }),
-                      ],
+                      item: item,
+                      t: t,
+                      onError: setErr,
+                      onDeleted: () => void refresh(),
                     },
                     item.name,
                   ),
@@ -248,7 +415,7 @@ window.__ModuleLoader__.load({
                       jsx("input", {
                         type: showValue ? "text" : "password",
                         value: value,
-                        placeholder: "••••••••",
+                        placeholder: MASK,
                         autoComplete: "new-password",
                         onChange: (ev) => setValue(ev.target.value),
                         style: {
@@ -262,9 +429,12 @@ window.__ModuleLoader__.load({
                         },
                       }),
                       jsx("button", {
+                        ...iconBtn,
                         type: "button",
+                        title: showValue ? t("hide") : t("show"),
+                        "aria-label": showValue ? t("hide") : t("show"),
                         onClick: () => setShowValue((v) => !v),
-                        children: showValue ? t("hide") : t("reveal"),
+                        children: jsx(IconEye, { open: showValue }),
                       }),
                     ],
                   }),
@@ -298,7 +468,7 @@ window.__ModuleLoader__.load({
       const t = tBound(ctx);
       const injected = () => ({ t });
 
-      // First-class Settings sidebar entry (same level as General / Models / Plugins)
+      // Settings sidebar only — do not also register settings.plugin.item (duplicate vault UI).
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
           {
@@ -306,19 +476,6 @@ window.__ModuleLoader__.load({
             id: SECTION_ID,
             order: 15,
             label: () => t("nav"),
-            locale: LOCALE_NS,
-            inject: injected,
-          },
-          SecretsSection,
-        ),
-      );
-
-      // Also keep a card under Plugins → Plugin configuration
-      ctx.slots.inject("settings.plugin.item", () =>
-        ctx.slots.register(
-          {
-            name: "settings.plugin.item",
-            key: "piblox-secrets",
             locale: LOCALE_NS,
             inject: injected,
           },
