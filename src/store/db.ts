@@ -1,26 +1,19 @@
 /**
- * SQLite secrets table (better-sqlite3, no Drizzle — KISS for public plugin).
+ * SQLite secrets table via Node.js built-in `node:sqlite` (Node ≥ 22).
+ * Avoids native better-sqlite3 so pnpm file: installs resolve cleanly.
  */
-import BetterSqlite3 from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
-export interface SecretRow {
-  id: number
-  name: string
-  encrypted_value: string
-  created_at: number
-  updated_at: number
-}
-
-export type SecretsDatabase = BetterSqlite3.Database
+export type SecretsDatabase = DatabaseSync
 
 export function openDb(dbPath: string): SecretsDatabase {
   if (dbPath !== ':memory:') {
     mkdirSync(path.dirname(dbPath), { recursive: true })
   }
-  const sqlite = new BetterSqlite3(dbPath)
-  sqlite.pragma('journal_mode = WAL')
+  const sqlite = new DatabaseSync(dbPath)
+  sqlite.exec('PRAGMA journal_mode = WAL')
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS secrets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

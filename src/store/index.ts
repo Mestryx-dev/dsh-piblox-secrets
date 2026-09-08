@@ -38,20 +38,16 @@ export function createStore(opts: CreateStoreOptions): SecretsStore {
 
   const upsert = db.prepare(`
     INSERT INTO secrets (name, encrypted_value, created_at, updated_at)
-    VALUES (@name, @encrypted_value, @created_at, @updated_at)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       encrypted_value = excluded.encrypted_value,
       updated_at = excluded.updated_at
   `)
-  const selectNames = db.prepare(
-    `SELECT name FROM secrets ORDER BY name COLLATE NOCASE`,
-  )
+  const selectNames = db.prepare(`SELECT name FROM secrets ORDER BY name COLLATE NOCASE`)
   const selectMeta = db.prepare(
     `SELECT name, created_at, updated_at FROM secrets ORDER BY name COLLATE NOCASE`,
   )
-  const selectOne = db.prepare(
-    `SELECT encrypted_value FROM secrets WHERE name = ? LIMIT 1`,
-  )
+  const selectOne = db.prepare(`SELECT encrypted_value FROM secrets WHERE name = ? LIMIT 1`)
   const deleteOne = db.prepare(`DELETE FROM secrets WHERE name = ?`)
   const countStmt = db.prepare(`SELECT COUNT(*) AS n FROM secrets`)
 
@@ -61,12 +57,7 @@ export function createStore(opts: CreateStoreOptions): SecretsStore {
         throw new Error('secret name must match /^[A-Z][A-Z0-9_]*$/')
       }
       const now = Date.now()
-      upsert.run({
-        name,
-        encrypted_value: encryptValue(value, key),
-        created_at: now,
-        updated_at: now,
-      })
+      upsert.run(name, encryptValue(value, key), now, now)
       return { name }
     },
 
@@ -96,12 +87,12 @@ export function createStore(opts: CreateStoreOptions): SecretsStore {
 
     async deleteSecret(name) {
       const result = deleteOne.run(name)
-      return result.changes > 0
+      return Number(result.changes ?? 0) > 0
     },
 
     async status() {
       const row = countStmt.get() as { n: number }
-      return { initialized: true, count: row.n, dataDir }
+      return { initialized: true, count: Number(row.n), dataDir }
     },
 
     close() {
