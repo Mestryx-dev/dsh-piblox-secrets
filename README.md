@@ -72,7 +72,7 @@ npx dsh-piblox-secrets discover --json
 ## Operator UI
 
 **Settings → Secrets** (sidebar section, same level as General / Models / Plugins).
-Also mirrored as a card under Plugins → Plugin configuration.
+Vault CRUD lives only there — not duplicated under Plugins.
 
 HTTP (same-origin, admin):
 
