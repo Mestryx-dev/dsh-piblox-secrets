@@ -55,6 +55,7 @@ CI installs `devDependency` `@deepseek-ai/schemastery` so `tsc` can resolve the 
 - Checkout: `~/dsh-lab/plugins/dsh-piblox-secrets/`
 - DSH web profile often uses `file:` — after build, rsync `dist/` into the pnpm store copy if tools/UI look stale; restart `dsh web` on `:3080`.
 - New agent **session** required to see newly registered Cordis tools.
+- Secrets UI hitting **404** on `/api/piblox-secrets/*` while the Settings page loads = host HTTP routes not registered (soft-inject `webServer` must wait; not a missing SQLite file). CLI still works: `npx dsh-piblox-secrets set KEY value` with `DSH_HOME` / `PIBLOX_SECRETS_DATA_DIR`.
 
 ## Do not
 

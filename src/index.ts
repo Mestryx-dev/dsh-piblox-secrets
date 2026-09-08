@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { PluginConfig } from './config.js'
 import { mergeConfig, SETTINGS_NS, loadSettingsSchema } from './config.js'
 import { PibloxCliBackendNotReadyError } from './bridge.js'
-import { registerHttpRoutes } from './http.js'
+import { createHttpHandlers, registerHttpRoutes } from './http.js'
 import { registerBundledSkill } from './register-skill.js'
 import { buildCapabilitiesResult, buildDiscoverResult } from './store/discover.js'
 import { exportDotenv } from './store/export-dotenv.js'
@@ -409,7 +409,34 @@ export function apply(
     })
   }
 
-  if (cfg.uiEnabled) {
+  // HTTP for Secrets UI — soft-inject webServer (headless skips). Do NOT use
+  // get('webServer') at apply(): tools may activate before webServer exists →
+  // silent skip → browser 404 on /api/piblox-secrets/* while the client UI loads.
+  if (cfg.uiEnabled && typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (wctx: unknown) => {
+        const httpCtx = wctx as {
+          webServer: { register: (route: { kind: string; path: string; handler: Function }) => () => void }
+          effect: typeof ctx.effect
+          logger?: { info?: (m: string) => void; warn?: (m: string) => void }
+        }
+        httpCtx.effect(() => {
+          const disposers = createHttpHandlers({
+            store,
+            registry: cfg.serviceRegistry,
+            uiEnabled: cfg.uiEnabled,
+          }).map((route) => httpCtx.webServer.register(route))
+          httpCtx.logger?.info?.('dsh-piblox-secrets: http routes registered on webServer')
+          return () => {
+            for (const dispose of disposers) dispose()
+          }
+        }, 'dsh-piblox-secrets: http routes')
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      ctx.logger?.warn?.(`dsh-piblox-secrets: webServer inject ${msg}`)
+    }
+  } else if (cfg.uiEnabled) {
     const webServer = get('webServer') as
       | { register: (route: { kind: string; path: string; handler: Function }) => void }
       | undefined
