@@ -30,10 +30,14 @@ credential **variable names** (`OPENROUTER_API_KEY`).
 
 ## Model tools (allowed)
 
+Call these as **Cordis agent tools** (not bash commands):
+
 | Tool | Returns |
 |------|---------|
 | `secrets_capabilities` | Capability ids + availability (`openrouter`, `github`, …) |
 | `secrets_discover` | Same capability → host map (no env var names) |
+
+Do **not** run `secrets_capabilities` in the shell — that yields `command not found`.
 
 ## Forbidden / not for agents
 
