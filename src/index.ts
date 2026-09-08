@@ -3,6 +3,7 @@ import type { PluginConfig } from './config.js'
 import { mergeConfig, SETTINGS_NS, loadSettingsSchema } from './config.js'
 import { PibloxCliBackendNotReadyError } from './bridge.js'
 import { registerHttpRoutes } from './http.js'
+import { registerBundledSkill } from './register-skill.js'
 import { buildDiscoverResult } from './store/discover.js'
 import { exportDotenv } from './store/export-dotenv.js'
 import { createStore, resolveDataDir, type SecretsStore } from './store/index.js'
@@ -168,6 +169,7 @@ export function apply(
     provide: (name: string, api: unknown) => void
     inject?: (deps: string[], fn: (c: unknown) => void) => void
     get?: (name: string) => unknown
+    effect?: (fn: () => (() => void) | void, label?: string) => void
   },
   config: Partial<PluginConfig> = {},
 ): void {
@@ -196,6 +198,27 @@ export function apply(
   })
 
   ctx.provide('secrets', api)
+
+  // Bundled agent skill via registry (not copied to ~/.dsh/skills).
+  // Prefer inject so we wait for dsh-skill even if this plugin boots earlier.
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['skills'], (sctx: unknown) => {
+        const scoped = sctx as { skills?: unknown }
+        registerBundledSkill({
+          logger: ctx.logger,
+          effect: ctx.effect,
+          get: (name) => (name === 'skills' ? scoped.skills : get(name)),
+        })
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      ctx.logger?.warn?.(`dsh-piblox-secrets: skill inject ${msg}`)
+      registerBundledSkill(ctx)
+    }
+  } else {
+    registerBundledSkill(ctx)
+  }
 
   if (cfg.exposeTools && tools?.register) {
     try {

@@ -12,11 +12,13 @@ window.__ModuleLoader__.load({
     let useEffect = react.useEffect;
     let useCallback = react.useCallback;
 
-    const NS = "piblox-secrets";
+    const SECTION_ID = "secrets";
+    const LOCALE_NS = "settings.secrets";
     const API = "/api/piblox-secrets";
 
     const DICT = {
       en: {
+        nav: "Secrets",
         title: "Secrets",
         subtitle: "Encrypted vault for API keys. Values stay off model context.",
         status: "Vault",
@@ -33,10 +35,32 @@ window.__ModuleLoader__.load({
         error: "Something went wrong",
         loading: "Loading…",
       },
+      zh: {
+        nav: "密钥",
+        title: "密钥",
+        subtitle: "加密保管 API 密钥。模型上下文不会看到明文。",
+        status: "保险库",
+        count: "项",
+        empty: "还没有密钥。在下方添加第一条。",
+        name: "名称",
+        value: "值",
+        add: "添加密钥",
+        reveal: "显示",
+        hide: "隐藏",
+        delete: "删除",
+        confirmDelete: "删除此密钥？",
+        nameHint: "UPPER_SNAKE_CASE",
+        error: "出错了",
+        loading: "加载中…",
+      },
     };
 
-    function t(key) {
-      return DICT.en[key] || key;
+    function tBound(ctx) {
+      try {
+        return ctx.locale.bind(LOCALE_NS);
+      } catch {
+        return (key) => DICT.en[key] || key;
+      }
     }
 
     async function api(path, init) {
@@ -51,7 +75,8 @@ window.__ModuleLoader__.load({
       return data;
     }
 
-    function SecretsCard() {
+    function SecretsSection(props) {
+      const t = (props && props.t) || ((k) => DICT.en[k] || k);
       const [items, setItems] = useState([]);
       const [status, setStatus] = useState(null);
       const [err, setErr] = useState("");
@@ -70,7 +95,7 @@ window.__ModuleLoader__.load({
         } catch (e) {
           setErr((e && e.message) || t("error"));
         }
-      }, []);
+      }, [t]);
 
       useEffect(() => {
         void refresh();
@@ -264,17 +289,42 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       if (!ctx.slots || !ctx.slots.inject) return;
-      ctx.slots.inject("settings.plugin.item", function* () {
-        yield ctx.slots.register(
+
+      ctx.effect(
+        () => ctx.locale.register(LOCALE_NS, { en: DICT.en, zh: DICT.zh }),
+        "dsh-piblox-secrets: locale",
+      );
+
+      const t = tBound(ctx);
+      const injected = () => ({ t });
+
+      // First-class Settings sidebar entry (same level as General / Models / Plugins)
+      ctx.slots.inject("settings.section", () =>
+        ctx.slots.register(
+          {
+            name: "settings.section",
+            id: SECTION_ID,
+            order: 15,
+            label: () => t("nav"),
+            locale: LOCALE_NS,
+            inject: injected,
+          },
+          SecretsSection,
+        ),
+      );
+
+      // Also keep a card under Plugins → Plugin configuration
+      ctx.slots.inject("settings.plugin.item", () =>
+        ctx.slots.register(
           {
             name: "settings.plugin.item",
-            key: NS,
-            locale: NS,
-            inject: () => ({}),
+            key: "piblox-secrets",
+            locale: LOCALE_NS,
+            inject: injected,
           },
-          SecretsCard,
-        );
-      });
+          SecretsSection,
+        ),
+      );
     }
 
     exports.apply = apply;

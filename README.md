@@ -39,7 +39,8 @@ npx dsh-piblox-secrets discover --json
 
 ## Operator UI
 
-Settings → Plugins → **Secrets** (`settings.plugin.item` key `piblox-secrets`).
+**Settings → Secrets** (sidebar section, same level as General / Models / Plugins).
+Also mirrored as a card under Plugins → Plugin configuration.
 
 HTTP (same-origin):
 
@@ -48,6 +49,14 @@ HTTP (same-origin):
 - `GET /api/piblox-secrets/discover`
 - `POST /api/piblox-secrets` `{ name, value }`
 - `GET|DELETE /api/piblox-secrets/:name`
+
+## Bundled agent skill
+
+Shipped as `skills/dsh-piblox-secrets.md`. On plugin `apply()`, if the host
+provides `ctx.skills`, the skill is registered into the **runtime skill
+registry** (`ctx.skills.register`) — it is **not** copied into `~/.dsh/skills`.
+Agents load it via the `skill` tool like any other catalog entry. Profiles
+without `dsh-skill` skip registration; tools and UI still work.
 
 ## Security
 
