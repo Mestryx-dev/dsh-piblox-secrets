@@ -52,6 +52,7 @@ npx dsh-piblox-secrets discover --json
 
 - Service: `ctx.provide('secrets', api)` — `resolve`, `materialize`, `capabilities`, `listNames` (admin), …
 - **Model tools:** `secrets_capabilities`, `secrets_discover` (capability ids / hosts only)
+- Registration follows DSH cookbook: `inject: ['tools']` + `ctx.effect(() => ctx.tools.register({ name, ... }))`
 - **Not registered by default:** `secrets_get`, `secrets_list_names`
 - Config: `exposeSecretsGetTool: false`, `allowProcessEnvMaterialize: false`, `bootHosts`, …
 

@@ -10,8 +10,13 @@ import { createStore, resolveDataDir, type SecretsStore } from './store/index.js
 
 export const name = 'dsh-piblox-secrets'
 
-/** Soft deps — public web installs may lack Core tools/observability at apply time. */
-export const inject: string[] = []
+/**
+ * Hard-inject `tools` so Cordis activates this plugin only when the tools
+ * service exists, then register with `ctx.tools.register(definition)` (one
+ * argument — cookbook adding-a-tool / cleverer env_check). Soft `inject: []`
+ * + two-arg `register(name, def)` never put tools in the agent catalog.
+ */
+export const inject = ['tools']
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(String(s)).digest('hex')
@@ -251,7 +256,10 @@ export function apply(
     provide: (name: string, api: unknown) => void
     inject?: (deps: string[], fn: (c: unknown) => void) => void
     get?: (name: string) => unknown
-    effect?: (fn: () => (() => void) | void, label?: string) => void
+    effect: (fn: () => (() => void) | void, label?: string) => void
+    tools: {
+      register: (definition: Record<string, unknown>) => () => void
+    }
   },
   config: Partial<PluginConfig> = {},
 ): void {
@@ -281,7 +289,6 @@ export function apply(
   ctx.provide('secrets', api)
 
   // Bundled agent skill via registry (not copied to ~/.dsh/skills).
-  // Prefer inject so we wait for dsh-skill even if this plugin boots earlier.
   if (typeof ctx.inject === 'function') {
     try {
       ctx.inject(['skills'], (sctx: unknown) => {
@@ -301,89 +308,82 @@ export function apply(
     registerBundledSkill(ctx)
   }
 
-  // Model tools — defer until tools service exists (host apply often runs before
-  // @deepseek-ai/dsh-tools). Soft get() at apply time silently skipped registration
-  // → agent saw "unknown tool secrets_capabilities" (session-edd48c70).
+  // Model tools — cookbook shape: inject:['tools'] + effect(() => tools.register({ name, ... }))
   if (cfg.exposeTools) {
-    const registerModelTools = (toolsCtx: {
-      tools?: { register?: (name: string, def: unknown) => void }
-      effect?: (fn: () => (() => void) | void, label?: string) => void
-      logger?: { info?: (m: string) => void; warn?: (m: string) => void }
-    }) => {
-      const register = toolsCtx.tools?.register
-      if (typeof register !== 'function') {
-        ctx.logger?.warn?.('dsh-piblox-secrets: tools.register missing after inject')
-        return
-      }
-      const run = () => {
-        try {
-          register('secrets_capabilities', {
-            description:
-              'List available credential capabilities (ids like openrouter, github). No secret values or env var names.',
-            parameters: { type: 'object', properties: {} },
-            execute: async () => api.capabilities(),
-          })
-          register('secrets_discover', {
-            description:
-              'Capability → host map for available integrations. No credential env names or secret handles.',
-            parameters: { type: 'object', properties: {} },
-            execute: async () => api.capabilities(),
-          })
-          if (cfg.exposeSecretsGetTool) {
-            register('secrets_get', {
-              description:
-                'BREAK-GLASS admin only. Does not write process.env. Plaintext requires allowBreakGlassPlaintext.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  key: { type: 'string' },
-                  reason: { type: 'string' },
-                  returnValue: { type: 'boolean' },
-                },
-                required: ['key', 'reason'],
-              },
-              execute: async ({
-                key,
-                reason,
-                returnValue,
-              }: {
-                key: string
-                reason: string
-                returnValue?: boolean
-              }) => api.secretsGet(key, reason, { returnValue }),
-            })
-          }
-          ctx.logger?.info?.(
-            `dsh-piblox-secrets: model tools registered (get=${cfg.exposeSecretsGetTool})`,
-          )
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          ctx.logger?.warn?.(`dsh-piblox-secrets: tool register ${msg}`)
-        }
-      }
-      if (typeof toolsCtx.effect === 'function') {
-        toolsCtx.effect(() => run(), 'dsh-piblox-secrets: tools')
-      } else {
-        run()
-      }
+    const jsonTool = (
+      name: string,
+      description: string,
+      execute: () => Promise<unknown>,
+    ) => {
+      ctx.effect(
+        () =>
+          ctx.tools.register({
+            name,
+            description,
+            parameters: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
+            output: {
+              schema: { type: 'object', additionalProperties: true },
+              render: (_args: unknown, value: unknown) => [
+                { type: 'text', text: JSON.stringify(value) },
+              ],
+            },
+            async execute() {
+              return execute()
+            },
+          }),
+        `dsh-piblox-secrets: ${name}`,
+      )
     }
 
-    if (typeof ctx.inject === 'function') {
-      try {
-        ctx.inject(['tools'], (tctx: unknown) => {
-          registerModelTools(tctx as Parameters<typeof registerModelTools>[0])
-        })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        ctx.logger?.warn?.(`dsh-piblox-secrets: tools inject ${msg}`)
-        const tools = get('tools') as { register?: (name: string, def: unknown) => void } | undefined
-        if (tools?.register) registerModelTools({ tools, effect: ctx.effect, logger: ctx.logger })
-      }
-    } else {
-      const tools = get('tools') as { register?: (name: string, def: unknown) => void } | undefined
-      if (tools?.register) registerModelTools({ tools, effect: ctx.effect, logger: ctx.logger })
-      else ctx.logger?.info?.('dsh-piblox-secrets: tools absent — model tools skipped')
+    jsonTool(
+      'secrets_capabilities',
+      'List available credential capabilities (ids like openrouter, github). No secret values or env var names.',
+      () => api.capabilities(),
+    )
+    jsonTool(
+      'secrets_discover',
+      'Capability → host map for available integrations. No credential env names or secret handles.',
+      () => api.capabilities(),
+    )
+
+    if (cfg.exposeSecretsGetTool) {
+      ctx.effect(
+        () =>
+          ctx.tools.register({
+            name: 'secrets_get',
+            description:
+              'BREAK-GLASS admin only. Does not write process.env. Plaintext requires allowBreakGlassPlaintext.',
+            parameters: {
+              type: 'object',
+              properties: {
+                key: { type: 'string', description: 'Vault key name' },
+                reason: { type: 'string', description: 'Why break-glass is needed' },
+                returnValue: { type: 'boolean', description: 'Request plaintext (denied unless configured)' },
+              },
+              required: ['key', 'reason'],
+              additionalProperties: false,
+            },
+            output: {
+              schema: { type: 'object', additionalProperties: true },
+              render: (_args: unknown, value: unknown) => [
+                { type: 'text', text: JSON.stringify(value) },
+              ],
+            },
+            async execute(args: { key: string; reason: string; returnValue?: boolean }) {
+              return api.secretsGet(args.key, args.reason, { returnValue: args.returnValue })
+            },
+          }),
+        'dsh-piblox-secrets: secrets_get',
+      )
     }
+
+    ctx.logger?.info?.(
+      `dsh-piblox-secrets: model tools registered (get=${cfg.exposeSecretsGetTool})`,
+    )
   }
 
   // Settings section when host provides settings + schemastery

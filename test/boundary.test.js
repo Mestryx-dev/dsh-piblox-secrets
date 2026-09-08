@@ -100,26 +100,25 @@ test('boundary: model capabilities omit credential env names', async () => {
 test('boundary: apply registers capabilities tools, not secrets_get by default', () => {
   const registered = []
   const toolsApi = {
-    register(toolName) {
-      registered.push(toolName)
+    register(definition) {
+      registered.push(definition.name)
+      return () => {}
     },
   }
   const ctx = {
     logger: { info() {}, warn() {} },
     provide() {},
+    tools: toolsApi,
     get() {
       return undefined
     },
     inject(deps, fn) {
-      if (deps.includes('tools')) {
-        fn({ tools: toolsApi, effect: (f) => f() })
-      }
       if (deps.includes('skills')) {
-        // skip
+        // optional — skip
       }
     },
     effect(fn) {
-      fn()
+      return fn()
     },
   }
   const dir = tmpDir()
