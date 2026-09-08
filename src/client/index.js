@@ -468,6 +468,7 @@ window.__ModuleLoader__.load({
       const t = tBound(ctx);
       const injected = () => ({ t });
 
+      // Settings sidebar only — do not also register settings.plugin.item (duplicate vault UI).
       ctx.slots.inject("settings.section", () =>
         ctx.slots.register(
           {
@@ -475,18 +476,6 @@ window.__ModuleLoader__.load({
             id: SECTION_ID,
             order: 15,
             label: () => t("nav"),
-            locale: LOCALE_NS,
-            inject: injected,
-          },
-          SecretsSection,
-        ),
-      );
-
-      ctx.slots.inject("settings.plugin.item", () =>
-        ctx.slots.register(
-          {
-            name: "settings.plugin.item",
-            key: "piblox-secrets",
             locale: LOCALE_NS,
             inject: injected,
           },
