@@ -5,12 +5,23 @@ Public [Cordis](https://github.com/shigma/cordis) / [DeepSeek Harness](https://g
 ## Install
 
 ```bash
+# npm (after first publish)
 dsh plugin --profile <name> add dsh-piblox-secrets
-# or from a checkout:
+
+# or from a local / git checkout
 dsh plugin --profile <name> add ./dsh-piblox-secrets
+# dsh plugin --profile <name> add github:Mestryx-dev/dsh-piblox-secrets
 ```
 
 Requires Node ≥ 22 (built-in `node:sqlite`). Headless profiles work without the web client half.
+
+## CI / release
+
+- CI: `npm test` on push/PR to `master`
+- npm publish: push tag `vX.Y.Z` matching `package.json` version (needs repo secret `NPM_TOKEN`)
+- Details: [docs/runbooks/release.md](docs/runbooks/release.md)
+
+No long-lived `dev` branch — trunk on `master`, operational feedback from Pi / lab via tags.
 
 ## Secrets Boundary v1.1
 
