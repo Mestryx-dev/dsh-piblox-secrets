@@ -1,0 +1,11 @@
+- insert:
+    - id: dsh-piblox-secrets
+      name: 'dsh-piblox-secrets'
+      config:
+        storeBackend: embedded
+        exposeTools: true
+        getReturnsEnvRef: true
+        uiEnabled: true
+        degradedMode: tools-error
+        bootHosts:
+          - '*'

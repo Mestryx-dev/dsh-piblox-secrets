@@ -1,0 +1,79 @@
+{
+  "name": "dsh-piblox-secrets",
+  "version": "0.1.0",
+  "description": "Cordis / DeepSeek Harness secrets vault — embedded AES-256-GCM SQLite store, model tools, operator Secrets UI",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dsh-piblox-secrets": "./bin/dsh-piblox-secrets.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "default": "./dist/client/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs && chmod +x dist/cli.js",
+    "test": "npm run build && node --test test/*.test.js",
+    "smoke": "npm run build && node test/smoke.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "secrets",
+    "piblox"
+  ],
+  "dependencies": {
+    "better-sqlite3": "^11.8.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mestryx-dev/dsh-piblox-secrets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mestryx-dev/dsh-piblox-secrets/issues"
+  },
+  "homepage": "https://github.com/Mestryx-dev/dsh-piblox-secrets#readme"
+}
