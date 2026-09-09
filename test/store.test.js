@@ -118,11 +118,13 @@ test('cordis service boot + capabilities (no env leak)', async () => {
 
 test('http handlers names + post (no value in list)', async () => {
   const dir = tmpDir()
-  const store = createStore({ dataDir: dir })
+  const api = createSecretsForTest({ dataDir: dir, bootHosts: ['*'] })
+  await api.boot()
   const routes = createHttpHandlers({
-    store,
+    secrets: api,
     registry: [],
     uiEnabled: true,
+    adminAuth: { requestRejection: () => undefined },
   })
   const router = routes.find((r) => r.path === '/api/piblox-secrets')
   assert.ok(router)
@@ -146,7 +148,7 @@ test('http handlers names + post (no value in list)', async () => {
   assert.equal(body.ok, true)
   assert.deepEqual(body.items, [])
 
-  store.close()
+  api.store.close()
   rmSync(dir, { recursive: true, force: true })
 })
 

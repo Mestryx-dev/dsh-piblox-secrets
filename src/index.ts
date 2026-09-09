@@ -43,6 +43,16 @@ export interface SecretsService {
     target: Record<string, string | undefined>,
   ): { ok: boolean; code?: string; message?: string; applied: string[] }
   /**
+   * Admin mutation: persist + hot-update in-memory vault so resolve() sees it immediately.
+   * Not a model tool.
+   */
+  set(name: string, value: string): Promise<{ ok: boolean; name: string; code?: string; message?: string }>
+  /**
+   * Admin mutation: delete from store + vault. resolve() returns not-found immediately.
+   * Not a model tool.
+   */
+  delete(name: string): Promise<{ ok: boolean; deleted: boolean; code?: string; message?: string }>
+  /**
    * Break-glass only. Never writes process.env. Model tool gated by exposeSecretsGetTool.
    */
   secretsGet(
@@ -159,6 +169,17 @@ function createSecretsService(
     return vault.has(n) || namesCache.names.includes(n)
   }
 
+  function invalidateCaches(): void {
+    namesCache = { at: 0, names: [] }
+    capabilitiesCache = { at: 0, data: null }
+    adminDiscoverCache = { at: 0, data: null }
+  }
+
+  function rebuildHashes(): void {
+    valueHashes.clear()
+    for (const v of vault.values()) valueHashes.add(sha256Hex(v))
+  }
+
   function resolve(ref: string) {
     const now = Date.now()
     if (now - resolveCount.window > 60_000) {
@@ -171,6 +192,40 @@ function createSecretsService(
     if (!vault.has(ref)) return { ok: false, code: 'E_NOT_FOUND_SECRET' }
     observability?.emit?.('tool.called', { key_name: ref, via: 'secrets.resolve' }, { source: 'secrets' })
     return { ok: true, value: vault.get(ref) }
+  }
+
+  /**
+   * Persist to encrypted store and hot-update the in-memory credential map.
+   * Guarantees resolve() sees the new value without profile/plugin restart.
+   */
+  async function set(name: string, value: string) {
+    if (!name || typeof value !== 'string' || !value) {
+      return { ok: false, name, code: 'E_INVALID_SECRET', message: 'name and value required' }
+    }
+    try {
+      await store.setSecret(name, value)
+      vault.set(name, value)
+      rebuildHashes()
+      invalidateCaches()
+      // Never process.env
+      return { ok: true, name }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { ok: false, name, code: 'E_TOOL_FAILURE_SECRETS_STORE', message }
+    }
+  }
+
+  async function deleteSecret(name: string) {
+    try {
+      const deleted = await store.deleteSecret(name)
+      vault.delete(name)
+      rebuildHashes()
+      invalidateCaches()
+      return { ok: true, deleted }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { ok: false, deleted: false, code: 'E_TOOL_FAILURE_SECRETS_STORE', message }
+    }
   }
 
   function materialize(
@@ -241,6 +296,8 @@ function createSecretsService(
     discover: capabilities,
     hasKey,
     resolve,
+    set,
+    delete: deleteSecret,
     materialize,
     secretsGet,
     isDegraded: () => degraded,
@@ -412,25 +469,55 @@ export function apply(
   // HTTP for Secrets UI — soft-inject webServer (headless skips). Do NOT use
   // get('webServer') at apply(): tools may activate before webServer exists →
   // silent skip → browser 404 on /api/piblox-secrets/* while the client UI loads.
+  // Admin auth: soft-inject connection (PLUGIN_REQUIRED — webServer has no upstream auth).
   if (cfg.uiEnabled && typeof ctx.inject === 'function') {
     try {
       ctx.inject(['webServer'], (wctx: unknown) => {
         const httpCtx = wctx as {
           webServer: { register: (route: { kind: string; path: string; handler: Function }) => () => void }
           effect: typeof ctx.effect
+          inject?: (deps: string[], fn: (c: unknown) => void) => void
           logger?: { info?: (m: string) => void; warn?: (m: string) => void }
         }
-        httpCtx.effect(() => {
-          const disposers = createHttpHandlers({
-            store,
-            registry: cfg.serviceRegistry,
-            uiEnabled: cfg.uiEnabled,
-          }).map((route) => httpCtx.webServer.register(route))
-          httpCtx.logger?.info?.('dsh-piblox-secrets: http routes registered on webServer')
-          return () => {
-            for (const dispose of disposers) dispose()
+
+        const registerWithAuth = (adminAuth: { requestRejection: (r: { headers: unknown }) => 401 | 403 | undefined } | undefined) => {
+          httpCtx.effect(() => {
+            const disposers = createHttpHandlers({
+              secrets: api,
+              registry: cfg.serviceRegistry,
+              uiEnabled: cfg.uiEnabled,
+              adminAuth,
+            }).map((route) => httpCtx.webServer.register(route))
+            httpCtx.logger?.info?.(
+              `dsh-piblox-secrets: http routes registered (adminAuth=${adminAuth ? 'connection' : 'none/fail-closed-sensitive'})`,
+            )
+            return () => {
+              for (const dispose of disposers) dispose()
+            }
+          }, 'dsh-piblox-secrets: http routes')
+        }
+
+        // Prefer Connection.requestRejection when available; sensitive routes fail closed otherwise.
+        if (typeof httpCtx.inject === 'function') {
+          try {
+            httpCtx.inject(['connection'], (cctx: unknown) => {
+              const connCtx = cctx as {
+                connection?: { requestRejection?: (r: { headers: unknown }) => 401 | 403 | undefined }
+              }
+              const connection = connCtx.connection
+              const adminAuth =
+                connection && typeof connection.requestRejection === 'function'
+                  ? { requestRejection: connection.requestRejection.bind(connection) }
+                  : undefined
+              registerWithAuth(adminAuth)
+            })
+            return
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            httpCtx.logger?.warn?.(`dsh-piblox-secrets: connection inject ${msg} — sensitive routes fail closed`)
           }
-        }, 'dsh-piblox-secrets: http routes')
+        }
+        registerWithAuth(undefined)
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -440,10 +527,18 @@ export function apply(
     const webServer = get('webServer') as
       | { register: (route: { kind: string; path: string; handler: Function }) => void }
       | undefined
+    const connection = get('connection') as
+      | { requestRejection?: (r: { headers: unknown }) => 401 | 403 | undefined }
+      | undefined
+    const adminAuth =
+      connection && typeof connection.requestRejection === 'function'
+        ? { requestRejection: connection.requestRejection.bind(connection) }
+        : undefined
     registerHttpRoutes(webServer, {
-      store,
+      secrets: api,
       registry: cfg.serviceRegistry,
       uiEnabled: cfg.uiEnabled,
+      adminAuth,
     })
   }
 }
@@ -459,4 +554,6 @@ export { createStore, resolveDataDir, getDefaultStore } from './store/index.js'
 export { buildDiscoverResult, buildCapabilitiesResult } from './store/discover.js'
 export { exportDotenv } from './store/export-dotenv.js'
 export { createHttpHandlers, API_PREFIX } from './http.js'
+export { rejectAdminRequest, sameOrigin } from './admin-auth.js'
+export type { AdminAuthHandle } from './admin-auth.js'
 export { PibloxCliBackendNotReadyError, listExternalCliNames } from './bridge.js'

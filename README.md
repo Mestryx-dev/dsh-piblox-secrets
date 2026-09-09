@@ -63,7 +63,8 @@ npx dsh-piblox-secrets discover --json
 
 ## Cordis
 
-- Service: `ctx.provide('secrets', api)` — `resolve`, `materialize`, `capabilities`, `listNames` (admin), …
+- Service: `ctx.provide('secrets', api)` — `resolve`, `set`, `delete`, `materialize`, `capabilities`, `listNames` (admin), …
+- **Admin mutations** (`set` / `delete`): persist to encrypted store **and** hot-update the in-memory vault so `resolve()` sees creates/rotations/deletes without restart. Not model tools.
 - **Model tools:** `secrets_capabilities`, `secrets_discover` (capability ids / hosts only)
 - Registration follows DSH cookbook: `inject: ['tools']` + `ctx.effect(() => ctx.tools.register({ name, ... }))`
 - **Not registered by default:** `secrets_get`, `secrets_list_names`
@@ -74,13 +75,15 @@ npx dsh-piblox-secrets discover --json
 **Settings → Secrets** (sidebar section, same level as General / Models / Plugins).
 Vault CRUD lives only there — not duplicated under Plugins.
 
-HTTP (same-origin, admin):
+HTTP (same-origin CSRF + Connection `requestRejection` for mutations/plaintext GET):
 
 - `GET /api/piblox-secrets/names`
 - `GET /api/piblox-secrets/status`
 - `GET /api/piblox-secrets/discover`
-- `POST /api/piblox-secrets` `{ name, value }`
-- `GET|DELETE /api/piblox-secrets/:name`
+- `POST /api/piblox-secrets` `{ name, value }` — requires admin session
+- `GET|DELETE /api/piblox-secrets/:name` — GET plaintext + DELETE require admin session
+
+**PLUGIN_HTTP_ADMIN_AUTH = PLUGIN_REQUIRED** — `dsh-host-webserver` has no server-wide auth; longer plugin prefixes bypass Connection’s `/api` bridge. Sensitive routes fail closed (503) if `connection` is unavailable.
 
 ## Bundled agent skill
 

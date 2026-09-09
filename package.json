@@ -1,6 +1,6 @@
 {
   "name": "dsh-piblox-secrets",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Cordis / DeepSeek Harness secrets vault — embedded AES-256-GCM SQLite store, model tools, operator Secrets UI",
   "type": "module",
   "main": "./dist/index.js",
