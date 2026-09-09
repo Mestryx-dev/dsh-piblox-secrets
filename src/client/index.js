@@ -23,8 +23,6 @@ window.__ModuleLoader__.load({
         nav: "Secrets",
         title: "Secrets",
         subtitle: "Encrypted vault for API keys. Values stay off model context.",
-        status: "Vault",
-        count: "secrets",
         empty: "No secrets yet. Add your first key below.",
         name: "Name",
         value: "Value",
@@ -43,8 +41,6 @@ window.__ModuleLoader__.load({
         nav: "密钥",
         title: "密钥",
         subtitle: "加密保管 API 密钥。模型上下文不会看到明文。",
-        status: "保险库",
-        count: "项",
         empty: "还没有密钥。在下方添加第一条。",
         name: "名称",
         value: "值",
@@ -294,21 +290,22 @@ window.__ModuleLoader__.load({
     function SecretsSection(props) {
       const t = (props && props.t) || ((k) => DICT.en[k] || k);
       const [items, setItems] = useState([]);
-      const [status, setStatus] = useState(null);
       const [err, setErr] = useState("");
       const [name, setName] = useState("");
       const [value, setValue] = useState("");
       const [showValue, setShowValue] = useState(false);
       const [busy, setBusy] = useState(false);
+      const [loading, setLoading] = useState(true);
 
       const refresh = useCallback(async () => {
         setErr("");
         try {
-          const [st, names] = await Promise.all([api("/status"), api("/names")]);
-          setStatus(st);
+          const names = await api("/names");
           setItems((names && names.items) || []);
         } catch (e) {
           setErr((e && e.message) || t("error"));
+        } finally {
+          setLoading(false);
         }
       }, [t]);
 
@@ -355,30 +352,29 @@ window.__ModuleLoader__.load({
             ],
           }),
           jsx("div", {
-            style: { fontSize: "0.8rem", opacity: 0.8 },
-            children: status
-              ? `${t("status")}: ${status.count ?? 0} ${t("count")}${status.dataDir ? " · " + status.dataDir : ""}`
-              : t("loading"),
-          }),
-          jsx("div", {
             style: { display: "flex", flexDirection: "column", gap: "0.5rem" },
-            children: items.length
-              ? items.map((item) =>
-                  jsx(
-                    SecretRow,
-                    {
-                      item: item,
-                      t: t,
-                      onError: setErr,
-                      onDeleted: () => void refresh(),
-                    },
-                    item.name,
-                  ),
-                )
-              : jsx("div", {
+            children: loading
+              ? jsx("div", {
                   style: { opacity: 0.65, fontSize: "0.9rem", padding: "0.5rem 0" },
-                  children: t("empty"),
-                }),
+                  children: t("loading"),
+                })
+              : items.length
+                ? items.map((item) =>
+                    jsx(
+                      SecretRow,
+                      {
+                        item: item,
+                        t: t,
+                        onError: setErr,
+                        onDeleted: () => void refresh(),
+                      },
+                      item.name,
+                    ),
+                  )
+                : jsx("div", {
+                    style: { opacity: 0.65, fontSize: "0.9rem", padding: "0.5rem 0" },
+                    children: t("empty"),
+                  }),
           }),
           jsxs("form", {
             onSubmit: onAdd,
